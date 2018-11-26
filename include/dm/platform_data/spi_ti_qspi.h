@@ -12,6 +12,7 @@ struct ti_qspi_platdata {
 	void *ctrl_mod_mmap;
 	ulong fclk;
 	void *memory_map;
+	size_t mmap_size;
 	uint max_hz;
 	u32 num_cs;
 };

@@ -954,6 +954,16 @@ ifeq ($(CONFIG_OF_EMBED),y)
 	@echo >&2 "See doc/README.fdt-control for more info."
 	@echo >&2 "===================================================="
 endif
+
+ifeq ($(CONFIG_DM_SPI),)
+ifeq ($(filter $(CONFIG_TI_QSPI),y),y)
+	@echo "===================== WARNING ======================"
+	@echo "This board uses SPI driver from drivers/spi/ without"
+	@echo "enabling CONFIG_DM_SPI. Please enable CONFIG_DM_SPI"
+	@echo "otherwise SPI on this board, cannot work."
+	@echo "===================================================="
+endif
+endif
 	@# Check that this build does not use CONFIG options that we do not
 	@# know about unless they are in Kconfig. All the existing CONFIG
 	@# options are whitelisted, so new ones should not be added.
