@@ -3,6 +3,7 @@ menu "SPI Flash Support"
 config DM_SPI_FLASH
 	bool "Enable Driver Model for SPI flash"
 	depends on DM && DM_SPI
+	select SPI_MEM
 	help
 	  Enable driver model for SPI flash. This SPI flash interface
 	  (spi_flash_probe(), spi_flash_write(), etc.) is then
@@ -33,6 +34,13 @@ config SPI_FLASH
 	  erasing through cmd_sf interface.
 
 	  If unsure, say N
+
+config SPI_FLASH_SFDP_SUPPORT
+	bool "SFDP table parsing support for SPI NOR flashes"
+	help
+	 Enable support for parsing and auto discovery of parameters for
+	 SPI NOR flashes using Serial Flash Discoverable Parameters (SFDP)
+	 tables as per JESD216 standard.
 
 config SPI_FLASH_BAR
 	bool "SPI flash Bank/Extended address register support"
