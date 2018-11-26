@@ -21,6 +21,8 @@
 #include <spi-mem.h>
 #include <spi.h>
 
+#include "sf_internal.h"
+
 /* Define max times to check status register before we give up. */
 
 /*
@@ -31,63 +33,6 @@
 #define HZ					CONFIG_SYS_HZ
 
 #define DEFAULT_READY_WAIT_JIFFIES		(40UL * HZ)
-
-#define SPI_NOR_MAX_ID_LEN	6
-#define SPI_NOR_MAX_ADDR_WIDTH	4
-
-struct flash_info {
-	char		*name;
-
-	/*
-	 * This array stores the ID bytes.
-	 * The first three bytes are the JEDIC ID.
-	 * JEDEC ID zero means "no ID" (mostly older chips).
-	 */
-	u8		id[SPI_NOR_MAX_ID_LEN];
-	u8		id_len;
-
-	/* The size listed here is what works with SPINOR_OP_SE, which isn't
-	 * necessarily called a "sector" by the vendor.
-	 */
-	unsigned int	sector_size;
-	u16		n_sectors;
-
-	u16		page_size;
-	u16		addr_width;
-
-	u16		flags;
-#define SECT_4K			BIT(0)	/* SPINOR_OP_BE_4K works uniformly */
-#define SPI_NOR_NO_ERASE	BIT(1)	/* No erase command needed */
-#define SST_WRITE		BIT(2)	/* use SST byte programming */
-#define SPI_NOR_NO_FR		BIT(3)	/* Can't do fastread */
-#define SECT_4K_PMC		BIT(4)	/* SPINOR_OP_BE_4K_PMC works uniformly */
-#define SPI_NOR_DUAL_READ	BIT(5)	/* Flash supports Dual Read */
-#define SPI_NOR_QUAD_READ	BIT(6)	/* Flash supports Quad Read */
-#define USE_FSR			BIT(7)	/* use flag status register */
-#define SPI_NOR_HAS_LOCK	BIT(8)	/* Flash supports lock/unlock via SR */
-#define SPI_NOR_HAS_TB		BIT(9)	/*
-					 * Flash SR has Top/Bottom (TB) protect
-					 * bit. Must be used with
-					 * SPI_NOR_HAS_LOCK.
-					 */
-#define	SPI_S3AN		BIT(10)	/*
-					 * Xilinx Spartan 3AN In-System Flash
-					 * (MFR cannot be used for probing
-					 * because it has the same value as
-					 * ATMEL flashes)
-					 */
-#define SPI_NOR_4B_OPCODES	BIT(11)	/*
-					 * Use dedicated 4byte address op codes
-					 * to support memory size above 128Mib.
-					 */
-#define NO_CHIP_ERASE		BIT(12) /* Chip does not support chip erase */
-#define SPI_NOR_SKIP_SFDP	BIT(13)	/* Skip parsing of SFDP tables */
-#define USE_CLSR		BIT(14)	/* use CLSR command */
-
-	int	(*quad_enable)(struct spi_nor *nor);
-};
-
-#define JEDEC_MFR(info)	((info)->id[0])
 
 static int spi_nor_read_write_reg(struct spi_nor *nor, struct spi_mem_op
 		*op, void *buf)
@@ -291,6 +236,7 @@ static struct spi_nor *mtd_to_spi_nor(struct mtd_info *mtd)
 	return mtd->priv;
 }
 
+#ifndef CONFIG_SPI_FLASH_BAR
 static u8 spi_nor_convert_opcode(u8 opcode, const u8 table[][2], size_t size)
 {
 	size_t i;
@@ -365,6 +311,7 @@ static void spi_nor_set_4byte_opcodes(struct spi_nor *nor,
 	nor->program_opcode = spi_nor_convert_3to4_program(nor->program_opcode);
 	nor->erase_opcode = spi_nor_convert_3to4_erase(nor->erase_opcode);
 }
+#endif /* !CONFIG_SPI_FLASH_BAR */
 
 /* Enable/disable 4-byte addressing mode. */
 static int set_4byte(struct spi_nor *nor, const struct flash_info *info,
@@ -501,6 +448,79 @@ static int spi_nor_wait_till_ready(struct spi_nor *nor)
 						    DEFAULT_READY_WAIT_JIFFIES);
 }
 
+#ifdef CONFIG_SPI_FLASH_BAR
+/*
+ * This "clean_bar" is necessary in a situation when one was accessing
+ * spi flash memory > 16 MiB by using Bank Address Register's BA24 bit.
+ *
+ * After it the BA24 bit shall be cleared to allow access to correct
+ * memory region after SW reset (by calling "reset" command).
+ *
+ * Otherwise, the BA24 bit may be left set and then after reset, the
+ * ROM would read/write/erase SPL from 16 MiB * bank_sel address.
+ */
+static int clean_bar(struct spi_nor *nor)
+{
+	u8 cmd, bank_sel = 0;
+
+	if (nor->bank_curr == 0)
+		return 0;
+	cmd = nor->bank_write_cmd;
+	nor->bank_curr = 0;
+	write_enable(nor);
+
+	return nor->write_reg(nor, cmd, &bank_sel, 1);
+}
+
+static int write_bar(struct spi_nor *nor, u32 offset)
+{
+	u8 cmd, bank_sel;
+	int ret;
+
+	bank_sel = offset / SZ_16M;
+	if (bank_sel == nor->bank_curr)
+		goto bar_end;
+
+	cmd = nor->bank_write_cmd;
+	write_enable(nor);
+	ret = nor->write_reg(nor, cmd, &bank_sel, 1);
+	if (ret < 0) {
+		debug("SF: fail to write bank register\n");
+		return ret;
+	}
+
+bar_end:
+	nor->bank_curr = bank_sel;
+	return nor->bank_curr;
+}
+
+static int read_bar(struct spi_nor *nor, const struct flash_info *info)
+{
+	u8 curr_bank = 0;
+	int ret;
+
+	switch (JEDEC_MFR(info)) {
+	case SNOR_MFR_SPANSION:
+		nor->bank_read_cmd = SPINOR_OP_BRRD;
+		nor->bank_write_cmd = SPINOR_OP_BRWR;
+		break;
+	default:
+		nor->bank_read_cmd = SPINOR_OP_RDEAR;
+		nor->bank_write_cmd = SPINOR_OP_WREAR;
+	}
+
+	ret = nor->read_reg(nor, nor->bank_read_cmd,
+				    &curr_bank, 1);
+	if (ret) {
+		debug("SF: fail to read bank addr register\n");
+		return ret;
+	}
+	nor->bank_curr = curr_bank;
+
+	return 0;
+}
+#endif
+
 /*
  * Initiate the erasure of a single sector
  */
@@ -545,6 +565,11 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 	len = instr->len;
 
 	while (len) {
+#ifdef CONFIG_SPI_FLASH_BAR
+		ret = write_bar(nor, addr);
+		if (ret < 0)
+			return ret;
+#endif
 		write_enable(nor);
 
 		ret = spi_nor_erase_sector(nor, addr);
@@ -559,9 +584,12 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 			goto erase_err;
 	}
 
+erase_err:
+#ifdef CONFIG_SPI_FLASH_BAR
+	ret = clean_bar(nor);
+#endif
 	write_disable(nor);
 
-erase_err:
 	return ret;
 }
 
@@ -1140,14 +1168,33 @@ static int spi_nor_read(struct mtd_info *mtd, loff_t from, size_t len,
 			size_t *retlen, u_char *buf)
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
+	struct spi_slave *spi = nor->spi;
 	int ret;
 
 	dev_dbg(nor->dev, "from 0x%08x, len %zd\n", (u32)from, len);
 
 	while (len) {
 		loff_t addr = from;
+		size_t read_len = len;
 
-		ret = nor->read(nor, addr, len, buf);
+#ifdef CONFIG_SPI_FLASH_BAR
+		u32 remain_len;
+
+		ret = write_bar(nor, addr);
+		if (ret < 0)
+			return log_ret(ret);
+		remain_len = (SZ_16M * (nor->bank_curr + 1)) - addr;
+
+		if (len < remain_len)
+			read_len = len;
+		else
+			read_len = remain_len;
+#endif
+
+		if (spi->max_read_size)
+			read_len = min(read_len, (size_t)spi->max_read_size);
+
+		ret = nor->read(nor, addr, read_len, buf);
 		if (ret == 0) {
 			/* We shouldn't see 0-length reads */
 			ret = -EIO;
@@ -1164,18 +1211,49 @@ static int spi_nor_read(struct mtd_info *mtd, loff_t from, size_t len,
 	ret = 0;
 
 read_err:
+#ifdef CONFIG_SPI_FLASH_BAR
+	ret = clean_bar(nor);
+#endif
 	return ret;
 }
 
 #ifdef CONFIG_SPI_FLASH_SST
+static int sst_write_byteprogram(struct spi_nor *nor, loff_t to, size_t len,
+				 size_t *retlen, const u_char *buf)
+{
+	size_t actual;
+	int ret = 0;
+
+	for (actual = 0; actual < len; actual++) {
+		nor->program_opcode = SPINOR_OP_BP;
+
+		write_enable(nor);
+		/* write one byte. */
+		ret = nor->write(nor, to, 1, buf + actual);
+		if (ret < 0)
+			goto sst_write_err;
+		ret = spi_nor_wait_till_ready(nor);
+		if (ret)
+			goto sst_write_err;
+		to++;
+	}
+
+sst_write_err:
+	write_disable(nor);
+	return ret;
+}
+
 static int sst_write(struct mtd_info *mtd, loff_t to, size_t len,
 		     size_t *retlen, const u_char *buf)
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
+	struct spi_slave *spi = nor->spi;
 	size_t actual;
 	int ret;
 
 	dev_dbg(nor->dev, "to 0x%08x, len %zd\n", (u32)to, len);
+	if (spi->mode & SPI_TX_BYTE)
+		return sst_write_byteprogram(nor, to, len, retlen, buf);
 
 	write_enable(nor);
 
@@ -1245,6 +1323,7 @@ static int spi_nor_write(struct mtd_info *mtd, loff_t to, size_t len,
 	size_t *retlen, const u_char *buf)
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
+	struct spi_slave *spi = nor->spi;
 	size_t page_offset, page_remain, i;
 	ssize_t ret;
 
@@ -1273,6 +1352,16 @@ static int spi_nor_write(struct mtd_info *mtd, loff_t to, size_t len,
 		page_remain = min_t(size_t,
 				    nor->page_size - page_offset, len - i);
 
+		if (spi->max_write_size)
+			page_remain = min(page_remain,
+					  (size_t)(spi->max_write_size -
+					  (nor->addr_width + 1)));
+
+#ifdef CONFIG_SPI_FLASH_BAR
+		ret = write_bar(nor, addr);
+		if (ret < 0)
+			return ret;
+#endif
 		write_enable(nor);
 		ret = nor->write(nor, addr, page_remain, buf + i);
 		if (ret < 0)
@@ -1291,6 +1380,9 @@ static int spi_nor_write(struct mtd_info *mtd, loff_t to, size_t len,
 	}
 
 write_err:
+#ifdef CONFIG_SPI_FLASH_BAR
+	ret = clean_bar(nor);
+#endif
 	return ret;
 }
 
@@ -2534,12 +2626,20 @@ int spi_nor_scan(struct spi_nor *nor)
 		/* already configured from SFDP */
 	} else if (info->addr_width) {
 		nor->addr_width = info->addr_width;
-	} else if (mtd->size > 0x1000000) {
+	} else if (mtd->size > SZ_16M) {
+#ifndef CONFIG_SPI_FLASH_BAR
 		/* enable 4-byte addressing if the device exceeds 16MiB */
 		nor->addr_width = 4;
 		if (JEDEC_MFR(info) == SNOR_MFR_SPANSION ||
 		    info->flags & SPI_NOR_4B_OPCODES)
 			spi_nor_set_4byte_opcodes(nor, info);
+#else
+	/* Configure the BAR - discover bank cmds and read current bank */
+	nor->addr_width = 3;
+	ret = read_bar(nor, info);
+	if (ret < 0)
+		return ret;
+#endif
 	} else {
 		nor->addr_width = 3;
 	}
