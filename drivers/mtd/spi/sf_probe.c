@@ -84,7 +84,7 @@ struct spi_flash *spi_flash_probe(unsigned int busnum, unsigned int cs,
 void spi_flash_free(struct spi_flash *flash)
 {
 #ifdef CONFIG_SPI_FLASH_MTD
-	spi_flash_mtd_unregister();
+	spi_flash_mtd_unregister(flash);
 #endif
 	spi_free_slave(flash->spi);
 	free(flash);
