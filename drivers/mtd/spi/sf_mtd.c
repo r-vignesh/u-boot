@@ -9,21 +9,19 @@
 #include <linux/mtd/mtd.h>
 #include <spi_flash.h>
 
-static struct mtd_info sf_mtd_info;
 static bool sf_mtd_registered;
 static char sf_mtd_name[8];
 
 static int spi_flash_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 {
-	struct spi_flash *flash = mtd->priv;
 	int err;
 
-	if (!flash)
+	if (!mtd || !mtd->priv)
 		return -ENODEV;
 
 	instr->state = MTD_ERASING;
 
-	err = spi_flash_erase(flash, instr->addr, instr->len);
+	err = mtd->_erase(mtd, instr);
 	if (err) {
 		instr->state = MTD_ERASE_FAILED;
 		instr->fail_addr = MTD_FAIL_ADDR_UNKNOWN;
@@ -39,13 +37,12 @@ static int spi_flash_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 static int spi_flash_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	size_t *retlen, u_char *buf)
 {
-	struct spi_flash *flash = mtd->priv;
 	int err;
 
-	if (!flash)
+	if (!mtd || !mtd->priv)
 		return -ENODEV;
 
-	err = spi_flash_read(flash, from, len, buf);
+	err = mtd->_read(mtd, from, len, retlen, buf);
 	if (!err)
 		*retlen = len;
 
@@ -55,13 +52,12 @@ static int spi_flash_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 static int spi_flash_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 	size_t *retlen, const u_char *buf)
 {
-	struct spi_flash *flash = mtd->priv;
 	int err;
 
-	if (!flash)
+	if (!mtd || !mtd->priv)
 		return -ENODEV;
 
-	err = spi_flash_write(flash, to, len, buf);
+	err = mtd->_write(mtd, to, len, retlen, buf);
 	if (!err)
 		*retlen = len;
 
@@ -83,10 +79,11 @@ static int spi_flash_mtd_number(void)
 
 int spi_flash_mtd_register(struct spi_flash *flash)
 {
+	struct mtd_info *mtd = &flash->mtd;
 	int ret;
 
 	if (sf_mtd_registered) {
-		ret = del_mtd_device(&sf_mtd_info);
+		ret = del_mtd_device(mtd);
 		if (ret)
 			return ret;
 
@@ -94,42 +91,33 @@ int spi_flash_mtd_register(struct spi_flash *flash)
 	}
 
 	sf_mtd_registered = false;
-	memset(&sf_mtd_info, 0, sizeof(sf_mtd_info));
 	sprintf(sf_mtd_name, "nor%d", spi_flash_mtd_number());
 
-	sf_mtd_info.name = sf_mtd_name;
-	sf_mtd_info.type = MTD_NORFLASH;
-	sf_mtd_info.flags = MTD_CAP_NORFLASH;
-	sf_mtd_info.writesize = 1;
-	sf_mtd_info.writebufsize = flash->page_size;
-
-	sf_mtd_info._erase = spi_flash_mtd_erase;
-	sf_mtd_info._read = spi_flash_mtd_read;
-	sf_mtd_info._write = spi_flash_mtd_write;
-	sf_mtd_info._sync = spi_flash_mtd_sync;
-
-	sf_mtd_info.size = flash->size;
-	sf_mtd_info.priv = flash;
+	mtd->name = sf_mtd_name;
+	mtd->_erase = spi_flash_mtd_erase;
+	mtd->_read = spi_flash_mtd_read;
+	mtd->_write = spi_flash_mtd_write;
+	mtd->_sync = spi_flash_mtd_sync;
 
 	/* Only uniform flash devices for now */
-	sf_mtd_info.numeraseregions = 0;
-	sf_mtd_info.erasesize = flash->sector_size;
+	mtd->numeraseregions = 0;
 
-	ret = add_mtd_device(&sf_mtd_info);
+	ret = add_mtd_device(mtd);
 	if (!ret)
 		sf_mtd_registered = true;
 
 	return ret;
 }
 
-void spi_flash_mtd_unregister(void)
+void spi_flash_mtd_unregister(struct spi_flash *flash)
 {
+	struct mtd_info *mtd = &flash->mtd;
 	int ret;
 
 	if (!sf_mtd_registered)
 		return;
 
-	ret = del_mtd_device(&sf_mtd_info);
+	ret = del_mtd_device(mtd);
 	if (!ret) {
 		sf_mtd_registered = false;
 		return;
@@ -141,7 +129,7 @@ void spi_flash_mtd_unregister(void)
 	 * use-after-free bug. Still, things should be fixed to prevent the
 	 * spi_flash object from being destroyed when del_mtd_device() fails.
 	 */
-	sf_mtd_info.priv = NULL;
+	mtd->priv = NULL;
 	printf("Failed to unregister MTD %s and the spi_flash object is going away: you're in deep trouble!",
-	       sf_mtd_info.name);
+	       sf_mtd_name);
 }
