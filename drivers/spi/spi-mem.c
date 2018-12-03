@@ -231,7 +231,13 @@ int spi_mem_exec_op(struct spi_slave *slave, const struct spi_mem_op *op)
 		mutex_lock(&ctlr->bus_lock_mutex);
 		mutex_lock(&ctlr->io_mutex);
 #endif
+		ret = spi_claim_bus(slave);
+		if (ret < 0)
+			return ret;
+
 		ret = ops->mem_ops->exec_op(slave, op);
+
+		spi_release_bus(slave);
 #ifndef __UBOOT__
 		mutex_unlock(&ctlr->io_mutex);
 		mutex_unlock(&ctlr->bus_lock_mutex);
