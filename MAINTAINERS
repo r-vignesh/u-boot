@@ -634,6 +634,14 @@ F:	drivers/mtd/spi/
 F:	drivers/spi/
 F:	include/spi*
 
+SPI-NOR FLASH
+M:	Vignesh R <vigneshr@ti.com>
+S:	Maintained
+F:	drivers/mtd/spi/
+F:	include/spi_flash.h
+F:	include/linux/mtd/cfi.h
+F:	include/linux/mtd/spi-nor.h
+
 SPMI
 M:	Mateusz Kulikowski <mateusz.kulikowski@gmail.com>
 S:	Maintained
