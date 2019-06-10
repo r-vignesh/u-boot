@@ -1530,6 +1530,9 @@ static int udma_request(struct dma *dma)
 	uc->desc_rx_cur = 0;
 	uc->num_rx_bufs = 0;
 
+	if (uc->dir == DMA_DEV_TO_MEM)
+		dma->flow_id = uc->rflow->id;
+
 	return 0;
 }
 
