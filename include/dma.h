@@ -292,6 +292,7 @@ int dma_receive(struct dma *dma, void **dst, void *metadata);
 int dma_send(struct dma *dma, void *src, size_t len, void *metadata);
 #endif /* CONFIG_DMA_CHANNELS */
 
+#if CONFIG_IS_ENABLED(DMA)
 /*
  * dma_get_device - get a DMA device which supports transfer
  * type of transfer_type
@@ -315,5 +316,15 @@ int dma_get_device(u32 transfer_type, struct udevice **devp);
 	     transferred and on failure return error code.
  */
 int dma_memcpy(void *dst, void *src, size_t len);
+#else
+static inline int dma_get_device(u32 transfer_type, struct udevice **devp)
+{
+	return -ENOSYS;
+}
 
+static inline int dma_memcpy(void *dst, void *src, size_t len)
+{
+	return -ENOSYS;
+}
+#endif /* CONFIG_DMA */
 #endif	/* _DMA_H_ */
