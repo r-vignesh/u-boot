@@ -1131,7 +1131,8 @@ static int udma_probe(struct udevice *dev)
 		return -EINVAL;
 	}
 
-	ret = uclass_get_device_by_name(UCLASS_FIRMWARE, "dmsc", &tisci_dev);
+	ret = uclass_get_device_by_phandle(UCLASS_FIRMWARE, dev,
+					   "ti,sci" , &tisci_dev);
 	if (ret) {
 		debug("TISCI RA RM get failed (%d)\n", ret);
 		ud->tisci = NULL;
