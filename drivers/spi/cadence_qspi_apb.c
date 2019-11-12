@@ -27,6 +27,7 @@
 
 #include <common.h>
 #include <asm/io.h>
+#include <dma.h>
 #include <linux/errno.h>
 #include <wait_bit.h>
 #include <spi.h>
@@ -661,7 +662,10 @@ int cadence_qspi_apb_read_execute(struct cadence_spi_platdata *plat,
 	size_t len = op->data.nbytes;
 
 	if (plat->use_dac_mode && (from + len < plat->ahbsize)) {
-		memcpy_fromio(buf, plat->ahbbase + from, len);
+		if (len < 256 ||
+		    dma_memcpy(buf, plat->ahbbase + from, len) < 0) {
+			memcpy_fromio(buf, plat->ahbbase + from, len);
+		}
 		if (!cadence_qspi_wait_idle(plat->regbase))
 			return -EIO;
 		return 0;
