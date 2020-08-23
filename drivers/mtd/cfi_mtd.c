@@ -6,12 +6,14 @@
  */
 
 #include <common.h>
+#include <dma.h>
 #include <flash.h>
 #include <malloc.h>
 
 #include <linux/errno.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/concat.h>
+#include <linux/types.h>
 #include <mtd/cfi_flash.h>
 
 static struct mtd_info cfi_mtd_info[CFI_MAX_FLASH_BANKS];
@@ -69,8 +71,12 @@ static int cfi_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 {
 	flash_info_t *fi = mtd->priv;
 	u_char *f = (u_char*)(fi->start[0]) + from;
+	int ret = 0;
 
-	memcpy(buf, f, len);
+	if (CONFIG_IS_ENABLED(DMA))
+		ret = dma_memcpy(buf, f, len);
+	if (ret <= 0)
+		memcpy(buf, f, len);
 	*retlen = len;
 
 	return 0;
