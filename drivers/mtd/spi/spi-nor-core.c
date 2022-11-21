@@ -202,6 +202,50 @@ struct spi_nor_fixups {
 
 #define SPI_NOR_SRST_SLEEP_LEN			200
 
+static int s28h512gt_non_volatile_reg_read(struct spi_nor *nor, u64 add)
+{
+	u8 buf;
+	int ret;
+
+	struct spi_mem_op op =
+		SPI_MEM_OP(SPI_MEM_OP_CMD(SPINOR_OP_RD_ANY_REG, 1),
+			   SPI_MEM_OP_ADDR(3, add, 1),
+			   SPI_MEM_OP_DUMMY(1, 1),
+			   SPI_MEM_OP_DATA_IN(1, &buf, 1));
+
+	ret = spi_mem_exec_op(nor->spi, &op);
+
+	if (ret) {
+		dev_err(nor->dev, "err ret=%d\n", ret);
+		return ret;
+	}
+	printf("Address nor_volatile: %0.8llx = %0.2x \r\n", add, buf);
+
+	return ret;
+}
+
+static int s28h512gt_volatile_reg_read(struct spi_nor *nor, u64 add)
+{
+	u8 buf;
+	int ret;
+
+	struct spi_mem_op op =
+		SPI_MEM_OP(SPI_MEM_OP_CMD(SPINOR_OP_RD_ANY_REG, 1),
+			   SPI_MEM_OP_ADDR(3, add, 1),
+			   SPI_MEM_OP_NO_DUMMY,
+			   SPI_MEM_OP_DATA_IN(1, &buf, 1));
+
+	ret = spi_mem_exec_op(nor->spi, &op);
+
+	if (ret) {
+		dev_err(nor->dev, "err ret=%d\n", ret);
+		return ret;
+	}
+	printf("Address volatile:     %0.8llx = %0.2x \r\n", add, buf);
+
+	return ret;
+}
+
 /**
  * spi_nor_get_cmd_ext() - Get the command opcode extension based on the
  *			   extension type.
@@ -3515,6 +3559,50 @@ int spi_nor_scan(struct spi_nor *nor)
 	 */
 	spi_nor_soft_reset(nor);
 #endif /* CONFIG_SPI_FLASH_SOFT_RESET_ON_BOOT */
+
+	ret = spi_nor_wait_till_ready(nor);
+		if (ret)
+		return ret;
+
+	ret = s28h512gt_non_volatile_reg_read(nor, 0x00000000);
+		if (ret)
+		return ret;
+	ret = s28h512gt_volatile_reg_read(nor, 0x00800000);
+		if (ret)
+		return ret;
+	ret = s28h512gt_volatile_reg_read(nor, 0x00800001);
+		if (ret)
+		return ret;
+	ret = s28h512gt_non_volatile_reg_read(nor, 0x00000002);
+		if (ret)
+		return ret;
+	ret = s28h512gt_volatile_reg_read(nor, 0x00800002);
+		if (ret)
+		return ret;
+	ret = s28h512gt_non_volatile_reg_read(nor, 0x00000003);
+		if (ret)
+		return ret;
+	ret = s28h512gt_volatile_reg_read(nor, 0x00800003);
+		if (ret)
+		return ret;
+	ret = s28h512gt_non_volatile_reg_read(nor, 0x00000004);
+		if (ret)
+		return ret;
+	ret = s28h512gt_volatile_reg_read(nor, 0x00800004);
+		if (ret)
+		return ret;
+	ret = s28h512gt_non_volatile_reg_read(nor, 0x00000005);
+		if (ret)
+		return ret;
+	ret = s28h512gt_volatile_reg_read(nor, 0x00800005);
+		if (ret)
+		return ret;
+	ret = s28h512gt_non_volatile_reg_read(nor, 0x00000006);
+		if (ret)
+		return ret;
+	ret = s28h512gt_volatile_reg_read(nor, 0x00800006);
+		if (ret)
+		return ret;
 
 	info = spi_nor_read_id(nor);
 	if (IS_ERR_OR_NULL(info))
